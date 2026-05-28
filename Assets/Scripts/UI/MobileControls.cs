@@ -11,7 +11,9 @@ public class MobileControls : MonoBehaviour
 #if UNITY_IOS || UNITY_ANDROID
         gameObject.SetActive(true);
 #else
-        gameObject.SetActive(_forceShow);
+        // SystemInfo.deviceType is Handheld when a phone opens a WebGL build in a browser
+        bool isMobile = SystemInfo.deviceType == DeviceType.Handheld;
+        gameObject.SetActive(_forceShow || isMobile);
 #endif
     }
 
