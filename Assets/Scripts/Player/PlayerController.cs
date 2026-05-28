@@ -1,36 +1,76 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(Rigidbody2D))]
 public class PlayerController : MonoBehaviour
 {
-    [SerializeField] private float      _moveSpeed          = 6f;
-    [SerializeField] private float      _jumpForce          = 12f;
-    [SerializeField] private float      _climbSpeed         = 4f;
-    [SerializeField] private LayerMask  _groundLayer;
-    [SerializeField] private Transform  _groundCheck;
-    [SerializeField] private float      _groundCheckRadius  = 0.15f;
-    [SerializeField] private float      _doubleJumpCooldown = 3f;
+    [SerializeField] private float     _moveSpeed          = 6f;
+    [SerializeField] private float     _jumpForce          = 12f;
+    [SerializeField] private float     _climbSpeed         = 4f;
+    [SerializeField] private LayerMask _groundLayer;
+    [SerializeField] private Transform _groundCheck;
+    [SerializeField] private float     _groundCheckRadius  = 0.15f;
+    [SerializeField] private float     _doubleJumpCooldown = 3f;
+
+    [Header("Wall Jump")]
+    [SerializeField] private Transform _wallCheckLeft;
+    [SerializeField] private Transform _wallCheckRight;
+    [SerializeField] private float     _wallCheckRadius    = 0.15f;
+    [SerializeField] private LayerMask _wallLayer;
+    [SerializeField] private float     _wallJumpForceX     = 8f;
+    [SerializeField] private float     _wallJumpForceY     = 10f;
+
+    [Header("Slide")]
+    [SerializeField] private float     _slideDuration      = 0.4f;
+    [SerializeField] private float     _slideSpeedMult     = 2f;
+    [SerializeField] private float     _slideCooldown      = 0.8f;
+
+    [Header("Dodge")]
+    [SerializeField] private float     _dodgeDuration      = 0.3f;
+    [SerializeField] private float     _dodgeForce         = 10f;
+    [SerializeField] private float     _dodgeCooldown      = 1.0f;
 
     [Header("Characters")]
     [SerializeField] private CharacterData[] _characters;
 
-    private Rigidbody2D     _rb;
-    private PlayerAbilities _abilities;
-    private Vector2         _moveInput;
-    private bool            _isGrounded;
-    private bool            _isClimbing;
-    private bool            _onVine;
+    private Rigidbody2D      _rb;
+    private PlayerAbilities  _abilities;
+    private WeaponHolder     _weaponHolder;
+    private PurifyBurst      _purifyBurst;
+    private PlayerHealth     _health;
 
-    // 0 = on ground (no jump used), 1 = first jump used, 2 = double jump used
-    private int             _jumpCount;
-    private float           _jumpLockTimer;
-    private float           _doubleJumpTimer;
+    private Vector2 _moveInput;
+    private bool    _isGrounded;
+    private bool    _isClimbing;
+    private bool    _onVine;
+    private bool    _isTouchingWallLeft;
+    private bool    _isTouchingWallRight;
+    private bool    _isSliding;
+    private bool    _isDodging;
+
+    // 0 = on ground (no jump used), 1 = first jump used, 2 = double jump / wall jump used
+    private int   _jumpCount;
+    private float _jumpLockTimer;
+    private float _doubleJumpTimer;
+    private float _slideTimer;
+    private float _slideCooldownTimer;
+    private float _dodgeTimer;
+    private float _dodgeCooldownTimer;
+    private float _comboSpeedMultiplier = 1f;
+    private float _facingDir = 1f;
+
+    public bool    IsGrounded => _isGrounded;
+    public bool    IsMoving   => Mathf.Abs(_moveInput.x) > 0.05f || Mathf.Abs(_moveInput.y) > 0.05f;
+    public Vector2 FacingDir  => new Vector2(_facingDir, 0f);
 
     private void Awake()
     {
-        _rb        = GetComponent<Rigidbody2D>();
-        _abilities = GetComponent<PlayerAbilities>();
+        _rb           = GetComponent<Rigidbody2D>();
+        _abilities    = GetComponent<PlayerAbilities>();
+        _weaponHolder = GetComponent<WeaponHolder>();
+        _purifyBurst  = GetComponent<PurifyBurst>();
+        _health       = GetComponent<PlayerHealth>();
         ApplySelectedCharacter();
     }
 
@@ -41,32 +81,57 @@ public class PlayerController : MonoBehaviour
         idx = Mathf.Clamp(idx, 0, _characters.Length - 1);
         CharacterData cd = _characters[idx];
         if (cd == null) return;
-
-        _moveSpeed  = cd.moveSpeed;
-        _jumpForce  = cd.jumpForce;
-
+        _moveSpeed = cd.moveSpeed;
+        _jumpForce = cd.jumpForce;
         var sr = GetComponent<SpriteRenderer>();
         if (sr != null) sr.color = cd.characterColor;
     }
 
     private void Update()
     {
-        if (_jumpLockTimer  > 0) _jumpLockTimer  -= Time.deltaTime;
+        if (_jumpLockTimer   > 0) _jumpLockTimer   -= Time.deltaTime;
         if (_doubleJumpTimer > 0) _doubleJumpTimer -= Time.deltaTime;
+        if (_slideCooldownTimer > 0) _slideCooldownTimer -= Time.deltaTime;
+        if (_dodgeCooldownTimer > 0) _dodgeCooldownTimer -= Time.deltaTime;
 
         if (_groundCheck != null)
         {
             bool wasGrounded = _isGrounded;
-            // velocity check prevents false grounded while jumping upward
             bool hit = Physics2D.OverlapCircle(_groundCheck.position, _groundCheckRadius, _groundLayer);
             _isGrounded = hit && _rb.linearVelocity.y <= 0.05f;
             if (_isGrounded && !wasGrounded)
+            {
                 _jumpCount = 0;
+                // Landing sound source for CaveMaw
+                SoundDetector.Instance?.RegisterSource(
+                    new SoundSource(transform.position, 1f, isPlayer: true));
+            }
+        }
+
+        // Wall detection
+        _isTouchingWallLeft  = _wallCheckLeft  != null &&
+            Physics2D.OverlapCircle(_wallCheckLeft.position,  _wallCheckRadius, _wallLayer);
+        _isTouchingWallRight = _wallCheckRight != null &&
+            Physics2D.OverlapCircle(_wallCheckRight.position, _wallCheckRadius, _wallLayer);
+
+        // Update facing — scale-flip so child objects (weapon) also face the right way
+        if (_moveInput.x > 0.05f)       _facingDir =  1f;
+        else if (_moveInput.x < -0.05f) _facingDir = -1f;
+        var s = transform.localScale;
+        transform.localScale = new Vector3(Mathf.Abs(s.x) * _facingDir, s.y, s.z);
+
+        // Slide timer
+        if (_isSliding)
+        {
+            _slideTimer -= Time.deltaTime;
+            if (_slideTimer <= 0f) EndSlide();
         }
     }
 
     private void FixedUpdate()
     {
+        if (_isDodging || _isSliding) return;
+
         if (_isClimbing || _onVine)
         {
             _rb.linearVelocity = _moveInput * _climbSpeed;
@@ -74,12 +139,13 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            _rb.linearVelocity = new Vector2(_moveInput.x * _moveSpeed, _rb.linearVelocity.y);
+            float speed = _moveSpeed * _comboSpeedMultiplier;
+            _rb.linearVelocity = new Vector2(_moveInput.x * speed, _rb.linearVelocity.y);
             _rb.gravityScale   = 3f;
         }
     }
 
-    // ── Input System callbacks ───────────────────────────────────────────────
+    // ── Input System callbacks ─────────────────────────────────────────────────
 
     public void OnMove(InputValue value)
         => _moveInput = value.Get<Vector2>();
@@ -88,9 +154,10 @@ public class PlayerController : MonoBehaviour
     {
         if (!value.isPressed) return;
 
+        bool touchingWall = _isTouchingWallLeft || _isTouchingWallRight;
+
         if (_isGrounded && _jumpCount == 0 && _jumpLockTimer <= 0)
         {
-            // First jump — only when standing on ground
             _jumpCount     = 1;
             _jumpLockTimer = 0.15f;
             _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, _jumpForce);
@@ -99,37 +166,101 @@ public class PlayerController : MonoBehaviour
         {
             ExitVine();
         }
+        else if (!_isGrounded && touchingWall && _jumpCount < 2)
+        {
+            // Wall jump — kick away from wall
+            float kickDir = _isTouchingWallRight ? -1f : 1f;
+            _jumpCount       = 2;
+            _jumpLockTimer   = 0.2f;
+            _doubleJumpTimer = _doubleJumpCooldown;
+            _rb.linearVelocity = new Vector2(kickDir * _wallJumpForceX, _wallJumpForceY);
+
+            // Wall impact sound for CaveMaw
+            SoundDetector.Instance?.RegisterSource(
+                new SoundSource(transform.position, 1.5f, isPlayer: true));
+        }
         else if (!_isGrounded && _jumpCount == 1 && _doubleJumpTimer <= 0)
         {
-            // Double jump — only after a grounded first jump, with cooldown
             _jumpCount       = 2;
             _doubleJumpTimer = _doubleJumpCooldown;
             _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, _jumpForce);
         }
     }
 
-    public void OnPulse(InputValue value)
+    public void OnSlide(InputValue value)
     {
-        if (value.isPressed) _abilities.UsePulseWave();
+        if (!value.isPressed || !_isGrounded || _isSliding || _slideCooldownTimer > 0) return;
+        if (Mathf.Abs(_moveInput.x) < 0.1f) return;
+        StartSlide();
     }
 
-    public void OnFocusCalm(InputValue value)
-        => _abilities.SetFocusCalm(value.isPressed);
-
-    public void OnEmotionalBurst(InputValue value)
+    // Attack (was OnPulse / Z key)
+    public void OnAttack(InputValue value)
     {
-        if (value.isPressed) _abilities.UseEmotionalBurst();
+        if (value.isPressed) _weaponHolder?.OnAttack();
     }
 
-    public void OnSpiritAssist(InputValue value)
+    // Dodge (was OnFocusCalm / X key)
+    public void OnDodge(InputValue value)
     {
-        if (value.isPressed) _abilities.UseSpiritAssist();
+        if (value.isPressed && !_isDodging && _dodgeCooldownTimer <= 0)
+            StartCoroutine(DodgeRoutine());
     }
 
-    // ── Traversal state (called by trigger zones) ────────────────────────────
+    // Weapon Skill (was OnEmotionalBurst / C key)
+    public void OnWeaponSkill(InputValue value)
+    {
+        if (value.isPressed) _weaponHolder?.OnWeaponSkill();
+    }
+
+    // Purify Burst (was OnSpiritAssist / V key)
+    public void OnPurifyBurst(InputValue value)
+    {
+        if (value.isPressed) _purifyBurst?.TryActivate();
+    }
+
+    // ── Traversal state (called by trigger zones) ──────────────────────────────
 
     public void EnterClimb() => _isClimbing = true;
     public void ExitClimb()  { _isClimbing = false; _rb.gravityScale = 3f; }
     public void EnterVine()  => _onVine = true;
     public void ExitVine()   { _onVine = false; _rb.gravityScale = 3f; }
+
+    // ── Combo speed bonus (set by ComboMeter) ─────────────────────────────────
+
+    public void SetComboSpeedBonus(float multiplier) => _comboSpeedMultiplier = multiplier;
+
+    // ── Slide ─────────────────────────────────────────────────────────────────
+
+    private void StartSlide()
+    {
+        _isSliding  = true;
+        _slideTimer = _slideDuration;
+        _slideCooldownTimer = _slideCooldown;
+
+        float speed = _moveSpeed * _slideSpeedMult * _facingDir;
+        _rb.linearVelocity = new Vector2(speed, _rb.linearVelocity.y);
+    }
+
+    private void EndSlide()
+    {
+        _isSliding = false;
+    }
+
+    // ── Dodge ─────────────────────────────────────────────────────────────────
+
+    private IEnumerator DodgeRoutine()
+    {
+        _isDodging          = true;
+        _dodgeCooldownTimer = _dodgeCooldown;
+        if (_health != null) _health.SetInvincible(true);
+
+        float dir = _moveInput.x != 0f ? Mathf.Sign(_moveInput.x) : _facingDir;
+        _rb.linearVelocity = new Vector2(dir * _dodgeForce, _rb.linearVelocity.y);
+
+        yield return new WaitForSeconds(_dodgeDuration);
+
+        _isDodging = false;
+        if (_health != null) _health.SetInvincible(false);
+    }
 }

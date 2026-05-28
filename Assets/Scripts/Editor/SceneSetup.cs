@@ -23,10 +23,14 @@ public static class SceneSetup
         }
 
         // ── Managers ────────────────────────────────────────────────────────
-        Make<GameManager>  ("GameManager");
-        Make<AudioManager> ("AudioManager");
-        Make<Match3Manager>("Match3Manager");
-        Make<BondSystem>   ("BondSystem");
+        Make<GameManager>          ("GameManager");
+        Make<AudioManager>         ("AudioManager");
+        Make<Match3Manager>        ("Match3Manager");
+        Make<BondSystem>           ("BondSystem");
+        Make<SoundDetector>        ("SoundDetector");
+        Make<WeaponUpgradeSystem>  ("WeaponUpgradeSystem");
+        Make<ComboMeter>           ("ComboMeter");
+        Make<ColdMeter>            ("ColdMeter");
 
         // ── Camera ──────────────────────────────────────────────────────────
         var camGo = GameObject.FindFirstObjectByType<Camera>()?.gameObject ?? new GameObject("Main Camera");
@@ -158,6 +162,9 @@ public static class SceneSetup
 
         Ensure<PlayerController>(player);
         Ensure<PlayerAbilities>(player);
+        Ensure<PlayerHealth>(player);
+        Ensure<WeaponHolder>(player);
+        Ensure<PurifyBurst>(player);
 
         // PlayerInput — sends "OnMove", "OnJump" etc. to PlayerController on same GameObject
         var pi = Ensure<UnityEngine.InputSystem.PlayerInput>(player);
@@ -170,20 +177,62 @@ public static class SceneSetup
             pi.notificationBehavior = UnityEngine.InputSystem.PlayerNotifications.SendMessages;
         }
 
+        player.tag = "Player";
+
         var gcGo = GetOrCreateChild(player, "GroundCheck");
         gcGo.transform.localPosition = new Vector3(0, -0.55f, 0);
 
+        var wcLeftGo  = GetOrCreateChild(player, "WallCheckLeft");
+        var wcRightGo = GetOrCreateChild(player, "WallCheckRight");
+        wcLeftGo.transform.localPosition  = new Vector3(-0.45f, 0f, 0f);
+        wcRightGo.transform.localPosition = new Vector3( 0.45f, 0f, 0f);
+
         var pcSo = new SerializedObject(player.GetComponent<PlayerController>());
-        pcSo.FindProperty("_groundCheck").objectReferenceValue = gcGo.transform;
-        // Ground layer mask — layer 0 (Default) = bit 1
-        pcSo.FindProperty("_groundLayer").intValue = 1;
+        pcSo.FindProperty("_groundCheck").objectReferenceValue    = gcGo.transform;
+        pcSo.FindProperty("_groundLayer").intValue                = 1;   // Default layer
+        pcSo.FindProperty("_wallCheckLeft").objectReferenceValue  = wcLeftGo.transform;
+        pcSo.FindProperty("_wallCheckRight").objectReferenceValue = wcRightGo.transform;
+        pcSo.FindProperty("_wallLayer").intValue                  = 1;   // Default layer
         pcSo.ApplyModifiedProperties();
 
-        var paSo = new SerializedObject(player.GetComponent<PlayerAbilities>());
-        paSo.FindProperty("_entityLayer").intValue = 1 << LayerMask.NameToLayer("Default");
-        paSo.ApplyModifiedProperties();
+        // ── Echo Staff weapon ────────────────────────────────────────────────
+        if (!AssetDatabase.IsValidFolder("Assets/Data"))
+            AssetDatabase.CreateFolder("Assets", "Data");
+        if (!AssetDatabase.IsValidFolder("Assets/Data/Weapons"))
+            AssetDatabase.CreateFolder("Assets/Data", "Weapons");
 
-        // Wire CameraFollow — must happen after player is created
+        const string staffAssetPath = "Assets/Data/Weapons/EchoStaff_Data.asset";
+        var staffData = AssetDatabase.LoadAssetAtPath<WeaponData>(staffAssetPath);
+        if (staffData == null)
+        {
+            staffData = ScriptableObject.CreateInstance<WeaponData>();
+            staffData.weaponId        = "echo_staff";
+            staffData.displayName     = "Echo Staff";
+            staffData.currentLevel    = 0;
+            staffData.baseSkillName   = "Echo Blast";
+            staffData.level2SkillName = "Sound Pulse";
+            staffData.level3SkillName = "Crystal Bounce";
+            staffData.maxSkillName    = "Echo Clone";
+            AssetDatabase.CreateAsset(staffData, staffAssetPath);
+            AssetDatabase.SaveAssets();
+        }
+
+        var staffGo = GetOrCreateChild(player, "EchoStaff");
+        var staffScript = Ensure<EchoStaff>(staffGo);
+        var staffSo = new SerializedObject(staffScript);
+        staffSo.FindProperty("_data").objectReferenceValue     = staffData;
+        staffSo.FindProperty("_hitLayer").intValue             = 1;  // Default
+        staffSo.FindProperty("_attackDamage").floatValue       = 10f;
+        staffSo.FindProperty("_attackCooldown").floatValue     = 0.4f;
+        staffSo.FindProperty("_skillCooldown").floatValue      = 3f;
+        staffSo.FindProperty("_blastSpeed").floatValue         = 10f;
+        staffSo.FindProperty("_pulseRadius").floatValue        = 4f;
+        staffSo.FindProperty("_cloneRange").floatValue         = 6f;
+        staffSo.FindProperty("_cloneLifetime").floatValue      = 5f;
+        staffSo.ApplyModifiedProperties();
+
+        // Wire CameraFollow + CameraShake — must happen after player is created
+        Ensure<CameraShake>(camGo);
         Ensure<CameraFollow>(camGo);
         var camFollowSo = new SerializedObject(camGo.GetComponent<CameraFollow>());
         camFollowSo.FindProperty("_target").objectReferenceValue = player.transform;
@@ -257,11 +306,180 @@ public static class SceneSetup
         elephFillImg.fillMethod = Image.FillMethod.Horizontal;
         elephFillImg.fillAmount = 0f;
 
+        // ── Boss HP Bar ─────────────────────────────────────────────────────
+        var bossHPRoot = GetOrCreateChild(canvas, "BossHPRoot");
+        var bossHPRootRt = Ensure<RectTransform>(bossHPRoot);
+        bossHPRootRt.anchorMin = new Vector2(0.2f, 1f);
+        bossHPRootRt.anchorMax = new Vector2(0.8f, 1f);
+        bossHPRootRt.anchoredPosition = new Vector2(0f, -18f);
+        bossHPRootRt.sizeDelta = new Vector2(0f, 22f);
+
+        var bossHPBgGo = GetOrCreateChild(bossHPRoot, "BG");
+        var bossHPBgRt = Ensure<RectTransform>(bossHPBgGo);
+        bossHPBgRt.anchorMin = Vector2.zero; bossHPBgRt.anchorMax = Vector2.one;
+        bossHPBgRt.offsetMin = bossHPBgRt.offsetMax = Vector2.zero;
+        Ensure<Image>(bossHPBgGo).color = new Color(0.08f, 0.08f, 0.08f, 0.85f);
+
+        var bossHPFillGo = GetOrCreateChild(bossHPRoot, "Fill");
+        var bossHPFillRt = Ensure<RectTransform>(bossHPFillGo);
+        bossHPFillRt.anchorMin = Vector2.zero; bossHPFillRt.anchorMax = Vector2.one;
+        bossHPFillRt.offsetMin = bossHPFillRt.offsetMax = Vector2.zero;
+        var bossHPFillImg = Ensure<Image>(bossHPFillGo);
+        bossHPFillImg.color = new Color(0.55f, 0.10f, 0.70f);
+        bossHPFillImg.type = Image.Type.Filled;
+        bossHPFillImg.fillMethod = Image.FillMethod.Horizontal;
+        bossHPFillImg.fillAmount = 1f;
+
+        var bossLblGo = GetOrCreateChild(bossHPRoot, "Label");
+        var bossLblRt = Ensure<RectTransform>(bossLblGo);
+        bossLblRt.anchorMin = Vector2.zero; bossLblRt.anchorMax = Vector2.one;
+        bossLblRt.offsetMin = bossLblRt.offsetMax = Vector2.zero;
+        var bossLbl = Ensure<TextMeshProUGUI>(bossLblGo);
+        bossLbl.text = "CORRUPTION"; bossLbl.fontSize = 11;
+        bossLbl.alignment = TextAlignmentOptions.Center; bossLbl.color = Color.white;
+
+        bossHPRoot.SetActive(false);
+
+        // ── Boss Phase Flash (full-screen white-flash on phase change) ───────
+        var phaseFlashGo = GetOrCreateChild(canvas, "BossPhaseFlash");
+        var phaseFlashRt = Ensure<RectTransform>(phaseFlashGo);
+        phaseFlashRt.anchorMin = Vector2.zero; phaseFlashRt.anchorMax = Vector2.one;
+        phaseFlashRt.offsetMin = phaseFlashRt.offsetMax = Vector2.zero;
+        var phaseFlashImg = Ensure<Image>(phaseFlashGo);
+        phaseFlashImg.color = new Color(1f, 0.9f, 0.4f, 0.5f);
+        phaseFlashGo.SetActive(false);
+
+        // ── Combo Counter ────────────────────────────────────────────────────
+        var comboRoot = GetOrCreateChild(canvas, "ComboRoot");
+        var comboRootRt = Ensure<RectTransform>(comboRoot);
+        comboRootRt.anchorMin = new Vector2(1f, 1f);
+        comboRootRt.anchorMax = new Vector2(1f, 1f);
+        comboRootRt.anchoredPosition = new Vector2(-80f, -50f);
+        comboRootRt.sizeDelta = new Vector2(120f, 50f);
+        var comboLbl = Ensure<TextMeshProUGUI>(comboRoot);
+        comboLbl.text = "x0"; comboLbl.fontSize = 32;
+        comboLbl.alignment = TextAlignmentOptions.Right;
+        comboLbl.color = new Color(1f, 0.85f, 0.2f);
+        comboRoot.SetActive(false);
+
+        // ── Purify Burst Prompt ──────────────────────────────────────────────
+        var purifyPromptGo = GetOrCreateChild(canvas, "PurifyBurstPrompt");
+        var purifyPromptRt = Ensure<RectTransform>(purifyPromptGo);
+        purifyPromptRt.anchorMin = new Vector2(0.5f, 0f);
+        purifyPromptRt.anchorMax = new Vector2(0.5f, 0f);
+        purifyPromptRt.anchoredPosition = new Vector2(0f, 60f);
+        purifyPromptRt.sizeDelta = new Vector2(340f, 44f);
+        var purifyBg = Ensure<Image>(purifyPromptGo);
+        purifyBg.color = new Color(0.55f, 0.10f, 0.70f, 0.75f);
+
+        var purifyTxtGo = GetOrCreateChild(purifyPromptGo, "Text");
+        var purifyTxtRt = Ensure<RectTransform>(purifyTxtGo);
+        purifyTxtRt.anchorMin = Vector2.zero; purifyTxtRt.anchorMax = Vector2.one;
+        purifyTxtRt.offsetMin = purifyTxtRt.offsetMax = Vector2.zero;
+        var purifyTxt = Ensure<TextMeshProUGUI>(purifyTxtGo);
+        purifyTxt.text = "PURIFY  [ V / LB ]"; purifyTxt.fontSize = 20;
+        purifyTxt.alignment = TextAlignmentOptions.Center; purifyTxt.color = Color.white;
+        purifyPromptGo.SetActive(false);
+
+        // ── Weapon Display (bottom-left) ─────────────────────────────────────
+        var weaponDisplayGo = GetOrCreateChild(canvas, "WeaponDisplay");
+        var weaponDisplayRt = Ensure<RectTransform>(weaponDisplayGo);
+        weaponDisplayRt.anchorMin = new Vector2(0f, 0f);
+        weaponDisplayRt.anchorMax = new Vector2(0f, 0f);
+        weaponDisplayRt.anchoredPosition = new Vector2(90f, 50f);
+        weaponDisplayRt.sizeDelta = new Vector2(160f, 40f);
+
+        var weaponNameGo = GetOrCreateChild(weaponDisplayGo, "WeaponName");
+        var weaponNameRt = Ensure<RectTransform>(weaponNameGo);
+        weaponNameRt.anchorMin = Vector2.zero; weaponNameRt.anchorMax = Vector2.one;
+        weaponNameRt.offsetMin = weaponNameRt.offsetMax = Vector2.zero;
+        var weaponNameTmp = Ensure<TextMeshProUGUI>(weaponNameGo);
+        weaponNameTmp.text = "Echo Staff Lv1"; weaponNameTmp.fontSize = 16;
+        weaponNameTmp.alignment = TextAlignmentOptions.Left;
+        weaponNameTmp.color = new Color(0.9f, 0.85f, 0.6f);
+
+        // Three level pip images
+        var levelPips = new Image[3];
+        for (int i = 0; i < 3; i++)
+        {
+            var pipGo = GetOrCreateChild(weaponDisplayGo, $"Pip{i}");
+            var pipRt = Ensure<RectTransform>(pipGo);
+            pipRt.anchorMin = new Vector2(0f, 0f);
+            pipRt.anchorMax = new Vector2(0f, 0f);
+            pipRt.anchoredPosition = new Vector2(10f + i * 18f, -12f);
+            pipRt.sizeDelta = new Vector2(12f, 12f);
+            var pipImg = Ensure<Image>(pipGo);
+            pipImg.color = new Color(0.3f, 0.3f, 0.3f);
+            levelPips[i] = pipImg;
+        }
+
+        // ── Fragment Counter ─────────────────────────────────────────────────
+        var fragmentGo = GetOrCreateChild(canvas, "FragmentText");
+        var fragmentRt = Ensure<RectTransform>(fragmentGo);
+        fragmentRt.anchorMin = new Vector2(0f, 1f);
+        fragmentRt.anchorMax = new Vector2(0f, 1f);
+        fragmentRt.anchoredPosition = new Vector2(90f, -48f);
+        fragmentRt.sizeDelta = new Vector2(200f, 26f);
+        var fragmentTmp = Ensure<TextMeshProUGUI>(fragmentGo);
+        fragmentTmp.text = "Fragments: 0"; fragmentTmp.fontSize = 16;
+        fragmentTmp.color = new Color(0.9f, 0.8f, 0.3f);
+
+        // ── Cold Meter (Chapter 3, hidden by default) ────────────────────────
+        var coldRoot = GetOrCreateChild(canvas, "ColdMeterRoot");
+        var coldRootRt = Ensure<RectTransform>(coldRoot);
+        coldRootRt.anchorMin = new Vector2(1f, 0f);
+        coldRootRt.anchorMax = new Vector2(1f, 0f);
+        coldRootRt.anchoredPosition = new Vector2(-70f, 50f);
+        coldRootRt.sizeDelta = new Vector2(120f, 18f);
+
+        var coldBgGo = GetOrCreateChild(coldRoot, "BG");
+        var coldBgRt = Ensure<RectTransform>(coldBgGo);
+        coldBgRt.anchorMin = Vector2.zero; coldBgRt.anchorMax = Vector2.one;
+        coldBgRt.offsetMin = coldBgRt.offsetMax = Vector2.zero;
+        Ensure<Image>(coldBgGo).color = new Color(0.1f, 0.15f, 0.3f, 0.8f);
+
+        var coldFillGo = GetOrCreateChild(coldRoot, "Fill");
+        var coldFillRt = Ensure<RectTransform>(coldFillGo);
+        coldFillRt.anchorMin = Vector2.zero; coldFillRt.anchorMax = Vector2.one;
+        coldFillRt.offsetMin = coldFillRt.offsetMax = Vector2.zero;
+        var coldFillImg = Ensure<Image>(coldFillGo);
+        coldFillImg.color = new Color(0.4f, 0.75f, 1f, 0.9f);
+        coldFillImg.type = Image.Type.Filled;
+        coldFillImg.fillMethod = Image.FillMethod.Horizontal;
+        coldFillImg.fillAmount = 0f;
+
+        var coldLblGo = GetOrCreateChild(coldRoot, "Label");
+        var coldLblRt = Ensure<RectTransform>(coldLblGo);
+        coldLblRt.anchorMin = Vector2.zero; coldLblRt.anchorMax = Vector2.one;
+        coldLblRt.offsetMin = coldLblRt.offsetMax = Vector2.zero;
+        var coldLbl = Ensure<TextMeshProUGUI>(coldLblGo);
+        coldLbl.text = "COLD"; coldLbl.fontSize = 10;
+        coldLbl.alignment = TextAlignmentOptions.Center; coldLbl.color = Color.white;
+        coldRoot.SetActive(false);
+
+        // ── Wire all HUDManager fields ────────────────────────────────────────
         var hudSo = new SerializedObject(canvas.GetComponent<HUDManager>());
-        hudSo.FindProperty("_leavesText").objectReferenceValue        = tmp;
+        hudSo.FindProperty("_leavesText").objectReferenceValue         = tmp;
         hudSo.FindProperty("_suppressionOverlay").objectReferenceValue = overlayGo;
-        hudSo.FindProperty("_deerBondFill").objectReferenceValue      = deerFillImg;
-        hudSo.FindProperty("_elephantBondFill").objectReferenceValue  = elephFillImg;
+        hudSo.FindProperty("_deerBondFill").objectReferenceValue       = deerFillImg;
+        hudSo.FindProperty("_elephantBondFill").objectReferenceValue   = elephFillImg;
+        hudSo.FindProperty("_bossHPFill").objectReferenceValue         = bossHPFillImg;
+        hudSo.FindProperty("_bossHPRoot").objectReferenceValue         = bossHPRoot;
+        hudSo.FindProperty("_bossPhaseFlash").objectReferenceValue     = phaseFlashImg;
+        hudSo.FindProperty("_comboText").objectReferenceValue          = comboLbl;
+        hudSo.FindProperty("_comboRoot").objectReferenceValue          = comboRoot;
+        hudSo.FindProperty("_purifyBurstPrompt").objectReferenceValue  = purifyPromptGo;
+        hudSo.FindProperty("_weaponNameText").objectReferenceValue     = weaponNameTmp;
+        hudSo.FindProperty("_fragmentText").objectReferenceValue       = fragmentTmp;
+        hudSo.FindProperty("_coldMeterFill").objectReferenceValue      = coldFillImg;
+        hudSo.FindProperty("_coldMeterRoot").objectReferenceValue      = coldRoot;
+
+        // Wire weapon level pips array (3 Images)
+        var pipsArrayProp = hudSo.FindProperty("_weaponLevelPips");
+        pipsArrayProp.arraySize = 3;
+        for (int i = 0; i < 3; i++)
+            pipsArrayProp.GetArrayElementAtIndex(i).objectReferenceValue = levelPips[i];
+
         hudSo.ApplyModifiedProperties();
 
         // ── Baby Deer ───────────────────────────────────────────────────────
@@ -324,8 +542,141 @@ public static class SceneSetup
         mmSo.FindProperty("_gridUI").objectReferenceValue = m3Panel;
         mmSo.ApplyModifiedProperties();
 
+        // ── CaveMaw Boss (demo) ──────────────────────────────────────────────
+        var caveMaw = GetOrCreate("CaveMaw");
+        caveMaw.transform.position   = new Vector3(10f, 0f, 0f);
+        caveMaw.transform.localScale = new Vector3(1.4f, 1.4f, 1f);
+        caveMaw.layer = LayerMask.NameToLayer("Default");
+
+        var cmSr = Ensure<SpriteRenderer>(caveMaw);
+        cmSr.sprite = DefaultSprite();
+        cmSr.color  = new Color(0.22f, 0.08f, 0.28f);   // dark purple = corrupted
+
+        var cmRb = Ensure<Rigidbody2D>(caveMaw);
+        cmRb.gravityScale   = 3f;
+        cmRb.freezeRotation = true;
+        cmRb.interpolation  = RigidbodyInterpolation2D.Interpolate;
+        Ensure<CapsuleCollider2D>(caveMaw);
+
+        Ensure<EntityStateMachine>(caveMaw);
+        Ensure<EntityController>(caveMaw);
+        Ensure<BossHealth>(caveMaw);
+        Ensure<CaveMawBoss>(caveMaw);
+
+        var cmSmSo = new SerializedObject(caveMaw.GetComponent<EntityStateMachine>());
+        cmSmSo.FindProperty("_startState").enumValueIndex = (int)EntityState.Agitated;
+        cmSmSo.ApplyModifiedProperties();
+
+        var cmEcSo = new SerializedObject(caveMaw.GetComponent<EntityController>());
+        cmEcSo.FindProperty("_entityType").enumValueIndex = (int)EntityType.Deer; // closest available type
+        cmEcSo.ApplyModifiedProperties();
+
+        var cmBossSo = new SerializedObject(caveMaw.GetComponent<CaveMawBoss>());
+        cmBossSo.FindProperty("_activationRange").floatValue = 20f;
+        cmBossSo.ApplyModifiedProperties();
+
+        // ── Mobile Controls ──────────────────────────────────────────────────
+        var mobileRoot = GetOrCreateChild(canvas, "MobileControls");
+        var mobileRt   = Ensure<RectTransform>(mobileRoot);
+        mobileRt.anchorMin = Vector2.zero;
+        mobileRt.anchorMax = Vector2.one;
+        mobileRt.offsetMin = mobileRt.offsetMax = Vector2.zero;
+        Ensure<MobileControls>(mobileRoot);
+
+        // Helper: build a round semi-transparent button with a label
+        static GameObject MakeTouchBtn(GameObject parent, string name, string label,
+                                       Vector2 anchor, Vector2 pos, float size,
+                                       Color color, string controlPath)
+        {
+            var go = GetOrCreateChild(parent, name);
+            var rt = Ensure<RectTransform>(go);
+            rt.anchorMin = rt.anchorMax = anchor;
+            rt.anchoredPosition = pos;
+            rt.sizeDelta = new Vector2(size, size);
+            var img = Ensure<Image>(go);
+            img.color = color;
+
+            var lGo = GetOrCreateChild(go, "Label");
+            var lRt = Ensure<RectTransform>(lGo);
+            lRt.anchorMin = Vector2.zero; lRt.anchorMax = Vector2.one;
+            lRt.offsetMin = lRt.offsetMax = Vector2.zero;
+            var lTmp = Ensure<TextMeshProUGUI>(lGo);
+            lTmp.text = label; lTmp.fontSize = 18;
+            lTmp.alignment = TextAlignmentOptions.Center;
+            lTmp.color = Color.white;
+
+            var btn = go.AddComponent<UnityEngine.InputSystem.OnScreen.OnScreenButton>();
+            btn.controlPath = controlPath;
+            return go;
+        }
+
+        // ── Left side — Joystick ─────────────────────────────────────────────
+        var stickBg = GetOrCreateChild(mobileRoot, "StickBackground");
+        var stickBgRt = Ensure<RectTransform>(stickBg);
+        stickBgRt.anchorMin = stickBgRt.anchorMax = new Vector2(0f, 0f);
+        stickBgRt.anchoredPosition = new Vector2(120f, 120f);
+        stickBgRt.sizeDelta = new Vector2(160f, 160f);
+        var stickBgImg = Ensure<Image>(stickBg);
+        stickBgImg.color = new Color(1f, 1f, 1f, 0.12f);
+
+        var stickThumb = GetOrCreateChild(stickBg, "Thumb");
+        var stickThumbRt = Ensure<RectTransform>(stickThumb);
+        stickThumbRt.anchorMin = stickThumbRt.anchorMax = new Vector2(0.5f, 0.5f);
+        stickThumbRt.anchoredPosition = Vector2.zero;
+        stickThumbRt.sizeDelta = new Vector2(70f, 70f);
+        var stickThumbImg = Ensure<Image>(stickThumb);
+        stickThumbImg.color = new Color(1f, 1f, 1f, 0.35f);
+
+        var onScreenStick = stickThumb.AddComponent<UnityEngine.InputSystem.OnScreen.OnScreenStick>();
+        onScreenStick.controlPath = "<Gamepad>/leftStick";
+
+        // Slide — left of joystick
+        MakeTouchBtn(mobileRoot, "SlideBtn", "SLIDE",
+            new Vector2(0f, 0f), new Vector2(290f, 60f), 75f,
+            new Color(0.3f, 0.5f, 0.3f, 0.75f), "<Gamepad>/leftTrigger");
+
+        // ── Right side — Action buttons ──────────────────────────────────────
+        // Layout (bottom-right anchor):
+        //              [SKILL]
+        //    [DODGE]   [JUMP]   [ATTACK]
+        //              [PURIFY]
+
+        Color btnGreen  = new Color(0.15f, 0.55f, 0.15f, 0.80f);
+        Color btnBlue   = new Color(0.15f, 0.35f, 0.65f, 0.80f);
+        Color btnOrange = new Color(0.70f, 0.30f, 0.05f, 0.80f);
+        Color btnPurple = new Color(0.50f, 0.10f, 0.65f, 0.85f);
+
+        // Jump — top of diamond
+        MakeTouchBtn(mobileRoot, "JumpBtn", "JUMP",
+            new Vector2(1f, 0f), new Vector2(-130f, 270f), 90f,
+            btnGreen, "<Gamepad>/buttonSouth");
+
+        // Attack — right of diamond
+        MakeTouchBtn(mobileRoot, "AttackBtn", "ATK",
+            new Vector2(1f, 0f), new Vector2(-60f, 160f), 90f,
+            btnOrange, "<Gamepad>/buttonWest");
+
+        // Dodge — left of diamond
+        MakeTouchBtn(mobileRoot, "DodgeBtn", "DODGE",
+            new Vector2(1f, 0f), new Vector2(-210f, 160f), 90f,
+            btnBlue, "<Gamepad>/rightShoulder");
+
+        // Weapon Skill — above jump
+        MakeTouchBtn(mobileRoot, "SkillBtn", "SKILL",
+            new Vector2(1f, 0f), new Vector2(-130f, 375f), 80f,
+            btnBlue, "<Gamepad>/rightTrigger");
+
+        // Purify Burst — below diamond, prominent purple
+        MakeTouchBtn(mobileRoot, "PurifyBtn", "PURIFY",
+            new Vector2(1f, 0f), new Vector2(-130f, 60f), 80f,
+            btnPurple, "<Gamepad>/leftShoulder");
+
         EditorUtility.SetDirty(player);
-        Debug.Log("[EotW] Scene ready — press Play. Walk into the deer and press Z to pulse it.");
+        EditorUtility.SetDirty(caveMaw);
+        Debug.Log("[EotW] Scene ready — press Play.\n" +
+                  "  Z = Attack (Echo Staff)   X = Dodge   C = Weapon Skill   V = Purify Burst\n" +
+                  "  Shift = Slide   Space = Jump (wall jump supported)\n" +
+                  "  Walk toward CaveMaw (purple square at x=10) to trigger the boss encounter.");
     }
 
     static Sprite DefaultSprite()

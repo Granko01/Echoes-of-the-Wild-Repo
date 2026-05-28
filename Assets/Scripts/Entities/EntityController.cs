@@ -6,10 +6,13 @@ public enum EntityType { Deer, Elephant, Fish, Bird, Unknown }
 [RequireComponent(typeof(EntityStateMachine), typeof(Rigidbody2D))]
 public class EntityController : MonoBehaviour
 {
-    [SerializeField] private EntityType _entityType    = EntityType.Unknown;
-    [SerializeField] private float      _chargeSpeed   = 4f;
-    [SerializeField] private float      _skittishRange = 3f;
+    [SerializeField] private EntityType _entityType     = EntityType.Unknown;
+    [SerializeField] private float      _chargeSpeed    = 4f;
+    [SerializeField] private float      _skittishRange  = 3f;
     [SerializeField] private float      _patrolDistance = 2f;
+
+    [Header("Platform Navigation")]
+    [SerializeField] private float _jumpForce = 9f;
 
     public EntityType Type => _entityType;
 
@@ -17,6 +20,7 @@ public class EntityController : MonoBehaviour
     private Rigidbody2D        _rb;
     private Transform          _patrolOrigin;
     private bool               _isActing;
+    private bool               _isCharging;  // true only during ChargeRoutine — used for damage collision
 
     private void Awake()
     {
@@ -70,7 +74,11 @@ public class EntityController : MonoBehaviour
 
     public void TriggerCharge(Transform target)
     {
-        if (!_isActing) StartCoroutine(ChargeRoutine(target));
+        // Always fires — stops any ongoing patrol or previous charge first
+        StopAllCoroutines();
+        _isActing   = false;
+        _isCharging = false;
+        StartCoroutine(ChargeRoutine(target));
     }
 
     private IEnumerator PatrolRoutine()
@@ -90,17 +98,58 @@ public class EntityController : MonoBehaviour
 
     private IEnumerator ChargeRoutine(Transform target)
     {
-        _isActing = true;
-        Vector2 dir = ((Vector2)target.position - (Vector2)transform.position).normalized;
-        float elapsed = 0f;
-        while (elapsed < 0.6f)
+        _isActing   = true;
+        _isCharging = true;
+
+        // Lock direction at charge START so the player can dodge — feels like an attack
+        float xDir      = target != null
+                          ? Mathf.Sign(((Vector2)target.position - (Vector2)transform.position).x)
+                          : 1f;
+        float dashSpeed = _chargeSpeed * 2.5f;   // much faster than normal — clearly a dash
+        float elapsed   = 0f;
+        float stuckTime = 0f;
+        float lastX     = transform.position.x;
+        bool  hitPlayer = false;
+
+        while (elapsed < 0.65f && !hitPlayer)
         {
-            _rb.linearVelocity = dir * _chargeSpeed;
+            _rb.linearVelocity = new Vector2(xDir * dashSpeed, _rb.linearVelocity.y);
+
+            // Proximity damage — works regardless of collider/trigger setup
+            Collider2D[] nearby = Physics2D.OverlapCircleAll(transform.position, 0.7f);
+            foreach (var col in nearby)
+            {
+                if (col.gameObject == gameObject) continue;
+                if (col.TryGetComponent<PlayerHealth>(out var ph))
+                {
+                    ph.TakeDamage(1);
+                    hitPlayer = true;
+                    break;
+                }
+            }
+
+            // Stuck detection + jump
+            float movedX    = Mathf.Abs(transform.position.x - lastX);
+            float expectedX = dashSpeed * Time.deltaTime;
+            stuckTime = movedX < expectedX * 0.25f ? stuckTime + Time.deltaTime : 0f;
+            lastX     = transform.position.x;
+
+            if (stuckTime > 0.12f && Mathf.Abs(_rb.linearVelocity.y) < 0.5f)
+            {
+                _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, _jumpForce);
+                stuckTime = 0f;
+            }
+
             elapsed += Time.deltaTime;
             yield return null;
         }
-        _rb.linearVelocity = Vector2.zero;
-        _isActing = false;
+
+        // Brief stop so it looks like a dash, not a slide
+        _rb.linearVelocity = new Vector2(0f, _rb.linearVelocity.y);
+        yield return new WaitForSeconds(0.3f);
+
+        _isCharging = false;
+        _isActing   = false;
     }
 
     private IEnumerator NuzzleAnimation()

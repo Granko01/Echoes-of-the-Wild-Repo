@@ -24,7 +24,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "Pulse",
+                    "name": "Attack",
                     "type": "Button",
                     "id": "a1b2c3d4-0002-0002-0002-000000000002",
                     "expectedControlType": "Button",
@@ -33,7 +33,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "FocusCalm",
+                    "name": "Dodge",
                     "type": "Button",
                     "id": "a1b2c3d4-0003-0003-0003-000000000003",
                     "expectedControlType": "Button",
@@ -42,7 +42,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "EmotionalBurst",
+                    "name": "WeaponSkill",
                     "type": "Button",
                     "id": "a1b2c3d4-0004-0004-0004-000000000004",
                     "expectedControlType": "Button",
@@ -51,9 +51,18 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "SpiritAssist",
+                    "name": "PurifyBurst",
                     "type": "Button",
                     "id": "a1b2c3d4-0005-0005-0005-000000000005",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "Slide",
+                    "type": "Button",
+                    "id": "a1b2c3d4-0006-0006-0006-000000000006",
                     "expectedControlType": "Button",
                     "processors": "",
                     "interactions": "",
@@ -200,7 +209,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "Pulse",
+                    "action": "Attack",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -211,7 +220,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Gamepad",
-                    "action": "Pulse",
+                    "action": "Attack",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -222,18 +231,18 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "FocusCalm",
+                    "action": "Dodge",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
                 {
                     "name": "",
                     "id": "b0000004-0000-0000-0000-000000000002",
-                    "path": "<Gamepad>/buttonNorth",
+                    "path": "<Gamepad>/rightShoulder",
                     "interactions": "",
                     "processors": "",
                     "groups": "Gamepad",
-                    "action": "FocusCalm",
+                    "action": "Dodge",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -244,18 +253,18 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "EmotionalBurst",
+                    "action": "WeaponSkill",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
                 {
                     "name": "",
                     "id": "b0000005-0000-0000-0000-000000000002",
-                    "path": "<Gamepad>/buttonEast",
+                    "path": "<Gamepad>/rightTrigger",
                     "interactions": "",
                     "processors": "",
                     "groups": "Gamepad",
-                    "action": "EmotionalBurst",
+                    "action": "WeaponSkill",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -266,7 +275,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "SpiritAssist",
+                    "action": "PurifyBurst",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -277,7 +286,29 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Gamepad",
-                    "action": "SpiritAssist",
+                    "action": "PurifyBurst",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "b0000007-0000-0000-0000-000000000001",
+                    "path": "<Keyboard>/leftShift",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "Slide",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "b0000007-0000-0000-0000-000000000002",
+                    "path": "<Gamepad>/leftTrigger",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Gamepad",
+                    "action": "Slide",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }
@@ -290,7 +321,7 @@
             "bindingGroup": "Keyboard&Mouse",
             "devices": [
                 { "devicePath": "<Keyboard>", "isOptional": false, "isOR": false },
-                { "devicePath": "<Mouse>", "isOptional": true, "isOR": false }
+                { "devicePath": "<Mouse>", "isOptional": true,  "isOR": false }
             ]
         },
         {
