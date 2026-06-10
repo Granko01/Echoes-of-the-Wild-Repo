@@ -1,19 +1,22 @@
 using UnityEngine;
 
-// Attach to the MobileControls root GameObject.
-// Auto-hides on desktop; always visible on mobile / in Editor when _forceShow is true.
 public class MobileControls : MonoBehaviour
 {
-    [SerializeField] private bool _forceShow = false;   // tick this in Editor to test
+    [SerializeField] private bool _forceShow = false;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [System.Runtime.InteropServices.DllImport("__Internal")]
+    private static extern bool IsMobileBrowser();
+#endif
 
     private void Start()
     {
 #if UNITY_IOS || UNITY_ANDROID
         gameObject.SetActive(true);
+#elif UNITY_WEBGL && !UNITY_EDITOR
+        gameObject.SetActive(_forceShow || IsMobileBrowser());
 #else
-        // SystemInfo.deviceType is Handheld when a phone opens a WebGL build in a browser
-        bool isMobile = SystemInfo.deviceType == DeviceType.Handheld;
-        gameObject.SetActive(_forceShow || isMobile);
+        gameObject.SetActive(_forceShow);
 #endif
     }
 
