@@ -26,6 +26,8 @@ public class ShopManager : MonoBehaviour
         GameEvents.RaiseShopOpened();
     }
 
+    public void OpenShop() => Open();
+
     public void Close()
     {
         IsOpen = false;
