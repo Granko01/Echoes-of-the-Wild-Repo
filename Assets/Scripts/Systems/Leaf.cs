@@ -26,7 +26,7 @@ public class Leaf : MonoBehaviour
     private void OnTriggerEnter2D(Collider2D other)
     {
         if (other.GetComponent<PlayerController>() == null) return;
-        if (_hud != null) _hud.AddLeaves(_value);
+       // if (_hud != null) _hud.AddLeaves(_value);
         Destroy(gameObject);
     }
 }

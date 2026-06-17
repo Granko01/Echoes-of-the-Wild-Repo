@@ -5,7 +5,13 @@ using UnityEngine.UI;
 public class HUDManager : MonoBehaviour
 {
     [Header("Currency")]
+    [SerializeField] private TextMeshProUGUI _gemsText;
+    [SerializeField] private TextMeshProUGUI _coinsText;
     [SerializeField] private TextMeshProUGUI _leavesText;
+
+    [Header("Energy")]
+    [SerializeField] private TextMeshProUGUI _energyText;       // e.g. "42/60"
+    [SerializeField] private TextMeshProUGUI _energyTimerText;  // e.g. "4:32"
 
     [Header("Bond Indicators — one Image per EntityType")]
     [SerializeField] private Image _deerBondFill;
@@ -43,52 +49,50 @@ public class HUDManager : MonoBehaviour
     [SerializeField] private Image           _coldMeterFill;        // Image with fillMethod=Horizontal
     [SerializeField] private GameObject      _coldMeterRoot;
 
-    private int             _leaves;
     private EntityController _activeMiniB;
 
     private void OnEnable()
     {
-        GameEvents.OnBondLevelUp        += HandleBondLevelUp;
-        GameEvents.OnHealComplete       += HandleHealComplete;
-        GameEvents.OnStateChange        += HandleStateChange;
-        GameEvents.OnMiniBossActivated  += HandleMiniBossActivated;
-        GameEvents.OnMiniBossDefeated   += HandleMiniBossDefeated;
-        GameEvents.OnPlayerDamaged      += HandlePlayerDamaged;
-
-        // New combat events
-        GameEvents.OnBossHPChanged      += HandleBossHPChanged;
-        GameEvents.OnBossPhaseChanged   += HandleBossPhaseChanged;
-        GameEvents.OnBossDefeated       += HandleBossDefeated;
-        GameEvents.OnComboChanged       += HandleComboChanged;
-        GameEvents.OnWeaponUpgraded     += HandleWeaponUpgraded;
-        GameEvents.OnFragmentCollected  += HandleFragmentCollected;
-        GameEvents.OnColdMeterChanged   += HandleColdMeterChanged;
+        GameEvents.OnBondLevelUp          += HandleBondLevelUp;
+        GameEvents.OnHealComplete         += HandleHealComplete;
+        GameEvents.OnStateChange          += HandleStateChange;
+        GameEvents.OnMiniBossActivated    += HandleMiniBossActivated;
+        GameEvents.OnMiniBossDefeated     += HandleMiniBossDefeated;
+        GameEvents.OnPlayerDamaged        += HandlePlayerDamaged;
+        GameEvents.OnBossHPChanged        += HandleBossHPChanged;
+        GameEvents.OnBossPhaseChanged     += HandleBossPhaseChanged;
+        GameEvents.OnBossDefeated         += HandleBossDefeated;
+        GameEvents.OnComboChanged         += HandleComboChanged;
+        GameEvents.OnWeaponUpgraded       += HandleWeaponUpgraded;
+        GameEvents.OnFragmentCollected    += HandleFragmentCollected;
+        GameEvents.OnColdMeterChanged     += HandleColdMeterChanged;
         GameEvents.OnPurifyBurstActivated += HandlePurifyBurstActivated;
+        GameEvents.OnGemsChanged          += HandleGemsChanged;
+        GameEvents.OnCoinsChanged         += HandleCoinsChanged;
+        GameEvents.OnLeavesChanged        += HandleLeavesChanged;
+        GameEvents.OnEnergyChanged        += HandleEnergyChanged;
     }
 
     private void OnDisable()
     {
-        GameEvents.OnBondLevelUp        -= HandleBondLevelUp;
-        GameEvents.OnHealComplete       -= HandleHealComplete;
-        GameEvents.OnStateChange        -= HandleStateChange;
-        GameEvents.OnMiniBossActivated  -= HandleMiniBossActivated;
-        GameEvents.OnMiniBossDefeated   -= HandleMiniBossDefeated;
-        GameEvents.OnPlayerDamaged      -= HandlePlayerDamaged;
-
-        GameEvents.OnBossHPChanged      -= HandleBossHPChanged;
-        GameEvents.OnBossPhaseChanged   -= HandleBossPhaseChanged;
-        GameEvents.OnBossDefeated       -= HandleBossDefeated;
-        GameEvents.OnComboChanged       -= HandleComboChanged;
-        GameEvents.OnWeaponUpgraded     -= HandleWeaponUpgraded;
-        GameEvents.OnFragmentCollected  -= HandleFragmentCollected;
-        GameEvents.OnColdMeterChanged   -= HandleColdMeterChanged;
+        GameEvents.OnBondLevelUp          -= HandleBondLevelUp;
+        GameEvents.OnHealComplete         -= HandleHealComplete;
+        GameEvents.OnStateChange          -= HandleStateChange;
+        GameEvents.OnMiniBossActivated    -= HandleMiniBossActivated;
+        GameEvents.OnMiniBossDefeated     -= HandleMiniBossDefeated;
+        GameEvents.OnPlayerDamaged        -= HandlePlayerDamaged;
+        GameEvents.OnBossHPChanged        -= HandleBossHPChanged;
+        GameEvents.OnBossPhaseChanged     -= HandleBossPhaseChanged;
+        GameEvents.OnBossDefeated         -= HandleBossDefeated;
+        GameEvents.OnComboChanged         -= HandleComboChanged;
+        GameEvents.OnWeaponUpgraded       -= HandleWeaponUpgraded;
+        GameEvents.OnFragmentCollected    -= HandleFragmentCollected;
+        GameEvents.OnColdMeterChanged     -= HandleColdMeterChanged;
         GameEvents.OnPurifyBurstActivated -= HandlePurifyBurstActivated;
-    }
-
-    public void AddLeaves(int amount)
-    {
-        _leaves += amount;
-        if (_leavesText != null) _leavesText.text = $"Leaves : x{_leaves}";
+        GameEvents.OnGemsChanged          -= HandleGemsChanged;
+        GameEvents.OnCoinsChanged         -= HandleCoinsChanged;
+        GameEvents.OnLeavesChanged        -= HandleLeavesChanged;
+        GameEvents.OnEnergyChanged        -= HandleEnergyChanged;
     }
 
     public void SetSuppressionOverlay(bool active)
@@ -108,7 +112,7 @@ public class HUDManager : MonoBehaviour
         }
     }
 
-    private void HandleHealComplete(BiomeArea area) => AddLeaves(10);
+    private void HandleHealComplete(BiomeArea area) => CurrencyManager.Instance?.AddLeaves(10);
 
     private void HandleStateChange(EntityController entity, EntityState state)
     {
@@ -202,8 +206,41 @@ public class HUDManager : MonoBehaviour
 
     private void HandlePurifyBurstActivated()
     {
-        // Hide prompt immediately once activated
         if (_purifyBurstPrompt != null) _purifyBurstPrompt.SetActive(false);
+    }
+
+    private void HandleGemsChanged(int amount)
+    {
+        if (_gemsText != null) _gemsText.text = $"{amount}";
+    }
+
+    private void HandleCoinsChanged(int amount)
+    {
+        if (_coinsText != null) _coinsText.text = $"{amount}";
+    }
+
+    private void HandleLeavesChanged(int amount)
+    {
+        if (_leavesText != null) _leavesText.text = $"x{amount}";
+    }
+
+    private void HandleEnergyChanged(int current, int max)
+    {
+        if (_energyText != null)
+            _energyText.text = current >= max ? $"{max}/{max}" : $"{current}/{max}";
+
+        if (_energyTimerText != null)
+            _energyTimerText.gameObject.SetActive(current < max);
+    }
+
+    private void Update()
+    {
+        // Refresh energy countdown every frame when not full
+        if (_energyTimerText == null || EnergyManager.Instance == null) return;
+        if (EnergyManager.Instance.IsFull) return;
+
+        //TimeSpan t = EnergyManager.Instance.TimeUntilNextEnergy();
+        //_energyTimerText.text = $"{t.Minutes}:{t.Seconds:D2}";
     }
 
     private System.Collections.IEnumerator FlashRoutine()

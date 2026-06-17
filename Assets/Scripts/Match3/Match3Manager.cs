@@ -62,6 +62,7 @@ public class Match3Manager : MonoBehaviour
         _target = null;
         if (_gridUI != null) _gridUI.SetActive(false);
         Time.timeScale = 1f;
+        GameEvents.RaiseMatch3LevelComplete();
     }
 
     // Called by Match3UI when player swaps two tiles
@@ -92,6 +93,41 @@ public class Match3Manager : MonoBehaviour
 
     // Direct grid read for UI rendering
     public TileType GetTile(int x, int y) => _grid?.Get(x, y) ?? TileType.Calm;
+
+    // Called by BoosterInventory when a booster is used during an open grid
+    public void ApplyBooster(BoosterType type)
+    {
+        if (!_isOpen || _grid == null) return;
+
+        List<(TileType type, int count)> matches;
+        int cx = _gridWidth / 2;
+        int cy = _gridHeight / 2;
+
+        switch (type)
+        {
+            case BoosterType.Bomb:
+                matches = _grid.ClearArea(cx, cy, radius: 1);
+                break;
+            case BoosterType.Rocket:
+                matches = _grid.ClearRow(cy);
+                break;
+            case BoosterType.RainbowOrb:
+                matches = _grid.ClearAllOfType(_grid.Get(cx, cy));
+                break;
+            default:
+                return;
+        }
+
+        foreach (var (tileType, count) in matches)
+        {
+            ApplyEffect(tileType, count);
+            GameEvents.RaiseMatchResolve(tileType, count);
+        }
+
+        var sm = _target?.GetComponent<EntityStateMachine>();
+        if (sm != null && sm.Current == EntityState.Stable)
+            CloseGrid();
+    }
 
     private void ApplyEffect(TileType type, int count)
     {
