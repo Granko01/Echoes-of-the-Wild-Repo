@@ -8,10 +8,6 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float     _moveSpeed          = 6f;
     [SerializeField] private float     _jumpForce          = 12f;
     [SerializeField] private float     _climbSpeed         = 4f;
-    [SerializeField] private LayerMask _groundLayer;
-    [SerializeField] private Transform _groundCheck;
-    [SerializeField] private float     _groundCheckRadius  = 0.15f;
-    [SerializeField] private float     _doubleJumpCooldown = 3f;
 
     [Header("Wall Jump")]
     [SerializeField] private Transform _wallCheckLeft;
@@ -42,6 +38,7 @@ public class PlayerController : MonoBehaviour
 
     private Vector2 _moveInput;
     private bool    _isGrounded;
+    private bool    _onGround;       // raw contact flag set by physics callbacks
     private bool    _isClimbing;
     private bool    _onVine;
     private bool    _isTouchingWallLeft;
@@ -49,10 +46,10 @@ public class PlayerController : MonoBehaviour
     private bool    _isSliding;
     private bool    _isDodging;
 
-    // 0 = on ground (no jump used), 1 = first jump used, 2 = double jump / wall jump used
+    // 0 = on ground, 1 = first jump used, 2 = double jump / wall jump used
     private int   _jumpCount;
     private float _jumpLockTimer;
-    private float _doubleJumpTimer;
+    private float _jumpDebounceTimer;
     private float _slideTimer;
     private float _slideCooldownTimer;
     private float _dodgeTimer;
@@ -89,23 +86,19 @@ public class PlayerController : MonoBehaviour
 
     private void Update()
     {
-        if (_jumpLockTimer   > 0) _jumpLockTimer   -= Time.deltaTime;
-        if (_doubleJumpTimer > 0) _doubleJumpTimer -= Time.deltaTime;
+        if (_jumpLockTimer      > 0) _jumpLockTimer      -= Time.deltaTime;
+        if (_jumpDebounceTimer  > 0) _jumpDebounceTimer  -= Time.deltaTime;
         if (_slideCooldownTimer > 0) _slideCooldownTimer -= Time.deltaTime;
         if (_dodgeCooldownTimer > 0) _dodgeCooldownTimer -= Time.deltaTime;
 
-        if (_groundCheck != null)
+        // Ground state: derived from physics collision callbacks; blocked during jump debounce.
+        bool wasGrounded = _isGrounded;
+        _isGrounded = _onGround && _jumpDebounceTimer <= 0;
+        if (_isGrounded && !wasGrounded)
         {
-            bool wasGrounded = _isGrounded;
-            bool hit = Physics2D.OverlapCircle(_groundCheck.position, _groundCheckRadius, _groundLayer);
-            _isGrounded = hit && _rb.linearVelocity.y <= 0.05f;
-            if (_isGrounded && !wasGrounded)
-            {
-                _jumpCount = 0;
-                // Landing sound source for CaveMaw
-                SoundDetector.Instance?.RegisterSource(
-                    new SoundSource(transform.position, 1f, isPlayer: true));
-            }
+            _jumpCount = 0;
+            SoundDetector.Instance?.RegisterSource(
+                new SoundSource(transform.position, 1f, isPlayer: true));
         }
 
         // Wall detection
@@ -130,6 +123,9 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        // Reset each physics step; OnCollisionStay2D re-sets it if contact is maintained.
+        _onGround = false;
+
         if (_isDodging || _isSliding) return;
 
         if (_isClimbing || _onVine)
@@ -142,6 +138,24 @@ public class PlayerController : MonoBehaviour
             float speed = _moveSpeed * _comboSpeedMultiplier;
             _rb.linearVelocity = new Vector2(_moveInput.x * speed, _rb.linearVelocity.y);
             _rb.gravityScale   = 3f;
+        }
+    }
+
+    // ── Ground contact detection ───────────────────────────────────────────────
+
+    private void OnCollisionEnter2D(Collision2D col) => EvaluateGroundContact(col);
+    private void OnCollisionStay2D(Collision2D col)  => EvaluateGroundContact(col);
+
+    private void EvaluateGroundContact(Collision2D col)
+    {
+        for (int i = 0; i < col.contactCount; i++)
+        {
+            // Contact normal pointing up (> 45°) means we're standing on a surface.
+            if (col.GetContact(i).normal.y > 0.7f)
+            {
+                _onGround = true;
+                return;
+            }
         }
     }
 
@@ -158,8 +172,9 @@ public class PlayerController : MonoBehaviour
 
         if (_isGrounded && _jumpCount == 0 && _jumpLockTimer <= 0)
         {
-            _jumpCount     = 1;
-            _jumpLockTimer = 0.15f;
+            _jumpCount         = 1;
+            _jumpLockTimer     = 0.15f;
+            _jumpDebounceTimer = 0.25f;
             _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, _jumpForce);
         }
         else if (_onVine)
@@ -169,20 +184,21 @@ public class PlayerController : MonoBehaviour
         else if (!_isGrounded && touchingWall && _jumpCount < 2)
         {
             // Wall jump — kick away from wall
-            float kickDir = _isTouchingWallRight ? -1f : 1f;
-            _jumpCount       = 2;
-            _jumpLockTimer   = 0.2f;
-            _doubleJumpTimer = _doubleJumpCooldown;
+            float kickDir      = _isTouchingWallRight ? -1f : 1f;
+            _jumpCount         = 2;
+            _jumpLockTimer     = 0.2f;
+            _jumpDebounceTimer = 0.25f;
             _rb.linearVelocity = new Vector2(kickDir * _wallJumpForceX, _wallJumpForceY);
 
-            // Wall impact sound for CaveMaw
             SoundDetector.Instance?.RegisterSource(
                 new SoundSource(transform.position, 1.5f, isPlayer: true));
         }
-        else if (!_isGrounded && _jumpCount == 1 && _doubleJumpTimer <= 0)
+        else if (!_isGrounded && _jumpCount == 1 && _jumpLockTimer <= 0)
         {
-            _jumpCount       = 2;
-            _doubleJumpTimer = _doubleJumpCooldown;
+            // Double jump — one per air time, gated solely by _jumpCount
+            _jumpCount         = 2;
+            _jumpLockTimer     = 0.15f;
+            _jumpDebounceTimer = 0.25f;
             _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, _jumpForce);
         }
     }
@@ -194,26 +210,22 @@ public class PlayerController : MonoBehaviour
         StartSlide();
     }
 
-    // Attack (was OnPulse / Z key)
     public void OnAttack(InputValue value)
     {
         if (value.isPressed) _weaponHolder?.OnAttack();
     }
 
-    // Dodge (was OnFocusCalm / X key)
     public void OnDodge(InputValue value)
     {
         if (value.isPressed && !_isDodging && _dodgeCooldownTimer <= 0)
             StartCoroutine(DodgeRoutine());
     }
 
-    // Weapon Skill (was OnEmotionalBurst / C key)
     public void OnWeaponSkill(InputValue value)
     {
         if (value.isPressed) _weaponHolder?.OnWeaponSkill();
     }
 
-    // Purify Burst (was OnSpiritAssist / V key)
     public void OnPurifyBurst(InputValue value)
     {
         if (value.isPressed) _purifyBurst?.TryActivate();

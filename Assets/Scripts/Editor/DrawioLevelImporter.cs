@@ -44,26 +44,36 @@ public static class DrawioLevelImporter
             "Select Draw.io Level File", Application.dataPath, "svg,drawio");
         if (string.IsNullOrEmpty(path)) return;
 
-        var doc = new XmlDocument();
-        doc.Load(path);
-
+        string raw = System.IO.File.ReadAllText(path);
         XmlDocument mxDoc;
 
-        if (doc.DocumentElement.Name == "svg")
+        if (raw.TrimStart().StartsWith("<svg") || raw.TrimStart().StartsWith("<?xml"))
         {
-            var content = doc.DocumentElement.GetAttribute("content");
-            if (string.IsNullOrEmpty(content))
+            var contentMatch = Regex.Match(raw, @"content=""(.*?)""",
+                RegexOptions.Singleline);
+            if (!contentMatch.Success)
             {
-                Debug.LogError("[LevelImport] SVG has no embedded draw.io content attribute.");
-                return;
+                // Try loading as native .drawio XML (no SVG wrapper)
+                mxDoc = new XmlDocument();
+                mxDoc.LoadXml(raw);
+                if (mxDoc.DocumentElement.Name != "mxfile")
+                {
+                    Debug.LogError("[LevelImport] Not a valid draw.io file.");
+                    return;
+                }
             }
-            content = DecodeEntities(content);
-            mxDoc = new XmlDocument();
-            mxDoc.LoadXml(content);
+            else
+            {
+                string content = contentMatch.Groups[1].Value;
+                content = DecodeEntities(content);
+                mxDoc = new XmlDocument();
+                mxDoc.LoadXml(content);
+            }
         }
         else
         {
-            mxDoc = doc;
+            mxDoc = new XmlDocument();
+            mxDoc.LoadXml(raw);
         }
 
         var diagrams = mxDoc.DocumentElement.SelectNodes("diagram");
@@ -305,11 +315,16 @@ public static class DrawioLevelImporter
 
     static string DecodeEntities(string s)
     {
+        // Single pass only — inner value= attributes use &amp;lt; which
+        // decodes to &lt; (valid XML entity).  A second pass would break
+        // them into raw '<' inside attribute values.
+        // &amp; MUST be last so &amp;lt; → &lt; (not <).
         return s.Replace("&#10;", "\n")
                 .Replace("&#13;", "\r")
                 .Replace("&lt;", "<")
                 .Replace("&gt;", ">")
                 .Replace("&quot;", "\"")
+                .Replace("&apos;", "'")
                 .Replace("&amp;", "&");
     }
 
